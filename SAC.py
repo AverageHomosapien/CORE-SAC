@@ -13,7 +13,7 @@ from utils import ReplayBuffer, plot_learning_curve
 
 """
 I noticed something interesting with SAC in the Lunar Lander environment -
-I let it play 2000 games with a batch size of 64 and reward scale of 2 (first try,
+I let it play 2000 games with a batch size of 64 and reward scd.cale of 2 (first try,
 I have not tuned either of these). It got up to an average score around 120 at
 the 900 game mark then slowly leaked down to 115 average by the 2000 mark.
 
@@ -152,7 +152,7 @@ class ActorNetwork(nn.Module):
 
         return mu, sigma
 
-    def sample_normal(self, state, reparameterize=True):
+    def sample_normal(self, state, reparameterize=True, deterministic=False):
         mu, sigma = self.forward(state)
         probabilities = Normal(mu, sigma)
 
@@ -166,7 +166,10 @@ class ActorNetwork(nn.Module):
         log_probs -= T.log(1-action.pow(2)+self.reparam_noise)
         log_probs = log_probs.sum(1, keepdim=True)
 
-        return action, log_probs
+        if not deterministic:
+            return action, log_probs
+        else:
+            return mu, log_probs
 
     def save_checkpoint(self):
         T.save(self.state_dict(), self.checkpoint_file)
@@ -197,9 +200,9 @@ class Agent():
         self.scale = reward_scale
         self.update_network_parameters(tau=1)
 
-    def choose_action(self, observation):
+    def choose_action(self, observation, deterministic=False):
         state = T.Tensor([observation]).to(self.actor.device)
-        actions, _ = self.actor.sample_normal(state, reparameterize=False)
+        actions, _ = self.actor.sample_normal(state, reparameterize=False, deterministic=deterministic)
 
         return actions.cpu().detach().numpy()[0]
 
@@ -297,31 +300,30 @@ class Agent():
         self.update_network_parameters()
 #InvertedPendulumBulletEnv
 # seperate method for running the network so that it can be called from run_agents
-def sac_run(actions=None, obs=None, env_id='HopperBulletEnv-v0', test_model=False, total_games=40000, run=3):
-#def sac_run(actions=None, obs=None, env_id='MountainCarContinuous-v0', test_model=False, total_games=20000, run=2):
-#def sac_run(actions=None, obs=None, env_id='LunarLanderContinuous-v2', test_model=False, total_games=20000, run=0):
+#def sac_run(actions=None, obs=None, env_id='HopperBulletEnv-v0', total_runs=150000, run=4):
+#def sac_run(actions=None, obs=None, env_id='MountainCarContinuous-v0', total_runs=150000, run=4):
+def sac_run(actions=None, obs=None, env_id='LunarLanderContinuous-v2', total_runs=150000, run=4):
     env = gym.make(env_id)
-    n_games = total_games
-    load_checkpoint = test_model
+    eval_env = gym.make(env_id)
+    runs = total_runs
     total_actions = env.action_space.shape[0] if actions == None else actions
     obs_space = env.observation_space.shape if obs == None else obs
 
-    agent = Agent(alpha=0.0003, beta=0.0003, reward_scale=2, env_id=env_id,
+    agent = Agent(alpha=0.0003, beta=0.0003, reward_scale=5, env_id=env_id,
                 input_dims=obs_space, tau=0.005,
                 env=env, batch_size=256, layer1_size=256, layer2_size=256,
                 n_actions=total_actions)
-    file = 'plots/sac_' + env_id + "_"+ str(n_games) + '_run_' + str(run) + '_games'
-    filename = file + '.png'
+    file = 'plots/sac_' + env_id + "_"+ str(total_runs) + '_run_' + str(run) + '_games'
+    file2 = 'plots/sac_eval_' + env_id + "_"+ str(total_runs) + '_run_' + str(run) + '_games'
 
     best_score = env.reward_range[0]
     score_history = []
-    load_checkpoint = False
+    episode_steps = []
+    step_count = 0
+    eval_scores = []
+    eval_steps = []
 
-    if load_checkpoint:
-        agent.load_models()
-        env.render(mode='human')
-
-    for i in range(n_games):
+    while True:
         steps = 0
         score = 0
         done = False
@@ -330,27 +332,43 @@ def sac_run(actions=None, obs=None, env_id='HopperBulletEnv-v0', test_model=Fals
             action = agent.choose_action(observation)
             observation_, reward, done, info = env.step(action)
             steps += 1
+            step_count += 1
             score += reward
             agent.remember(observation, action, reward, observation_, done)
-            if not load_checkpoint:
-                agent.learn()
+            agent.learn()
             observation = observation_
+            if step_count % 1000 == 0: # Originally 100, up to 1000
+                eval_score = 0
+                eval_observation = eval_env.reset()
+                eval_done = False
+                eval_step_ct = 0
+                while not eval_done:
+                    eval_action = agent.choose_action(eval_observation, deterministic=True)
+                    eval_observation_, eval_reward, eval_done, eval_info = eval_env.step(eval_action)
+                    eval_score += eval_reward
+                    eval_observation = eval_observation_
+                    eval_step_ct += 1
+                eval_scores.append(eval_score)
+                eval_steps.append(eval_step_ct)
+                agent.save_models()
+                zipped_list = list(zip(score_history, episode_steps))
+                df = pd.DataFrame(zipped_list, columns=['Stochastic Scores', 'Steps'])
+                df.to_csv(file + '.csv')
+                zipped_list2 = list(zip(eval_scores, eval_steps))
+                df2 = pd.DataFrame(zipped_list2, columns=['Eval Scores', 'Eval Steps'])
+                df2.to_csv(file2 + '.csv')
+                print('eval run {}, score {}, env {}'.format(eval_step_ct, eval_score, env_id))
+
         score_history.append(score)
+        episode_steps.append(steps)
         avg_score = np.mean(score_history[-100:])
 
-        #if avg_score > best_score:
-        #    best_score = avg_score
-        if i % 20 == 0:
-            if not load_checkpoint:
-                agent.save_models()
-
-        print('episode {} score {} trailing 100 games avg {} steps {} env {}'.format(
-            i, score, avg_score, steps, env_id))
-    if not load_checkpoint:
-        x = [i+1 for i in range(n_games)]
-        plot_learning_curve(x, score_history, filename)
-        df = pd.DataFrame(score_history)
-        df.to_csv(file + '.csv')
+    zipped_list = list(zip(score_history, episode_steps))
+    df = pd.DataFrame(zipped_list, columns=['Stochastic Scores', 'Steps'])
+    df.to_csv(file + '.csv')
+    zipped_list2 = list(zip(eval_scores, eval_steps))
+    df2 = pd.DataFrame(zipped_list2, columns=['Eval Scores', 'Eval Steps'])
+    df2.to_csv(file2 + '.csv')
 
 # environments with large negative rewards don't work (e.g. LunarLander)
 if __name__ == '__main__':
