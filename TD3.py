@@ -247,23 +247,26 @@ class TD3Agent():
         self.target_critic_1.load_checkpoint()
         self.target_critic_2.load_checkpoint()
 
+    def reset_noise(self):
+        self.noise = 0
+
 # 20000 mountaincar games takes roughly 2 days + run for 3 networks to get zero'd results !!!!
 # seperate method for running the network so that it can be called from run_agents
-def td3_run(actions=None, obs=None, env_id='HopperBulletEnv-v0', total_runs=1000000, run=1):
-#def td3_run(actions=None, obs=None, env_id='MountainCarContinuous-v0', total_runs=300000, run=0):
+#def td3_run(actions=None, obs=None, env_id='HopperBulletEnv-v0', total_runs=1000000, run=1):
+def td3_run(actions=None, obs=None, env_id='MountainCarContinuous-v0', total_runs=300000, run=0):
 #def td3_run(actions=None, obs=None, env_id='LunarLanderContinuous-v2', total_runs=300000, run=0):
     env = gym.make(env_id)
     eval_env = gym.make(env_id)
     runs = total_runs
     total_actions = env.action_space.shape[0] if actions == None else actions
     obs_space = env.observation_space.shape if obs == None else obs
-    
+
     layer1 = 400
     layer2 = 300
     batch = 100
 
     agent = TD3Agent(alpha=0.001, beta=0.001,
-            input_dims=obs_space, tau=0.005, gamma=0.98, noise=0.1, max_size=200000,
+            input_dims=obs_space, tau=0.005, gamma=0.99, noise=0.5, max_size=1000000,
             env=env, batch_size=batch, layer1_size=layer1, layer2_size=layer2,
             n_actions=total_actions, env_id=env_id)
 
@@ -308,15 +311,16 @@ def td3_run(actions=None, obs=None, env_id='HopperBulletEnv-v0', total_runs=1000
             zipped_list = list(zip(scores, steps))
             df = pd.DataFrame(zipped_list, columns=['Scores', 'Steps'])
             df.to_csv(file + '.csv')
-        
-        
-    
+
+
+
     while True:
+        agent.reset_noise()
         eval_score = 0
         eval_observation = eval_env.reset()
         eval_done = False
         step = 0
-        
+
         while not eval_done:
             eval_action = agent.choose_action(eval_observation)
             eval_observation_, eval_reward, eval_done, eval_info = eval_env.step(eval_action)
@@ -324,10 +328,10 @@ def td3_run(actions=None, obs=None, env_id='HopperBulletEnv-v0', total_runs=1000
             eval_observation = eval_observation_
             eval_step += 1
             step += 1
-        
+
         eval_scores.append(eval_score)
         eval_steps.append(step)
-        
+
         if eval_step >= total_eval_steps:
             print('eval steps {}, score {}, env {}'.format(eval_step, eval_score, env_id))
             zipped_list2 = list(zip(eval_scores, eval_steps))

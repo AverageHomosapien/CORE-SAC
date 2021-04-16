@@ -158,11 +158,14 @@ class DDPGAgent():
                                     n_actions=n_actions, name=env_id+'_target_critic')
         self.update_network_parameters(tau=1)
 
-    def choose_action(self, observation):
+    def choose_action(self, observation, deterministic=False):
         self.actor.eval()
         state = T.tensor([observation], dtype=T.float).to(self.actor.device)
         mu = self.actor.forward(state).to(self.actor.device)
-        mu_prime = mu + T.tensor(self.noise(), dtype=T.float).to(self.actor.device)
+        if deterministic:
+            mu_prime = mu
+        else:
+            mu_prime = mu + T.tensor(self.noise(), dtype=T.float).to(self.actor.device)
         self.actor.train()
 
         return mu_prime.cpu().detach().numpy()[0]
@@ -254,12 +257,12 @@ def ddpg_run(actions=None, obs=None, env_id='HopperBulletEnv-v0', test_model=Fal
     load_checkpoint = test_model
     total_actions = env.action_space.shape[0] if actions == None else actions
     obs_space = env.observation_space.shape if obs == None else obs
-    
+
     layer1 = 400
     layer2 = 300
     batch=256
 
-    agent = DDPGAgent(alpha=0.0007, beta=0.0007, input_dims=obs_space, 
+    agent = DDPGAgent(alpha=0.0007, beta=0.0007, input_dims=obs_space,
                 tau=0.005, batch_size=batch, fc1_dims=layer1, fc2_dims=layer2,
                 n_actions=total_actions, env_id=env_id, max_size=1000000)
     file = 'plots/ddpg_' + env_id + "_"+ str(total_runs) + '_run_' + str(run) + '_games_' + str(layer1) + '_layer'
@@ -305,7 +308,7 @@ def ddpg_run(actions=None, obs=None, env_id='HopperBulletEnv-v0', test_model=Fal
             zipped_list = list(zip(scores, steps))
             df = pd.DataFrame(zipped_list, columns=['Scores', 'Steps'])
             df.to_csv(file + '.csv')
-    
+
     while True:
         eval_score = 0
         step = 0
@@ -313,16 +316,16 @@ def ddpg_run(actions=None, obs=None, env_id='HopperBulletEnv-v0', test_model=Fal
         eval_done = False
         agent.noise.reset()
         while not eval_done:
-            eval_action = agent.choose_action(eval_observation)
+            eval_action = agent.choose_action(eval_observation, deterministic=True)
             eval_observation_, eval_reward, eval_done, eval_info = eval_env.step(eval_action)
             eval_score += eval_reward
             eval_observation = eval_observation_
             eval_step += 1
             step += 1
-            
+
         eval_scores.append(eval_score)
         eval_steps.append(step)
-        
+
         if eval_step >= total_eval_steps:
             print('eval steps {}, score {}, env {}'.format(eval_step, eval_score, env_id))
             zipped_list2 = list(zip(eval_scores, eval_steps))
@@ -334,7 +337,7 @@ def ddpg_run(actions=None, obs=None, env_id='HopperBulletEnv-v0', test_model=Fal
             zipped_list2 = list(zip(eval_scores, eval_steps))
             df2 = pd.DataFrame(zipped_list2, columns=['Scores', 'Steps'])
             df2.to_csv(file2 + '.csv')
-        
+
 
 
 if __name__ == "__main__":
