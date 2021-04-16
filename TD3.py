@@ -296,6 +296,8 @@ def td3_run(actions=None, obs=None, env_id='MountainCarContinuous-v0', total_run
             score += reward
             observation = observation_
             step += 1
+            if total_steps % 10000 == 0:
+                print("current steps are {}, last score was {}".format(total_steps, scores[-1]))
         scores.append(score)
         steps.append(step)
         if total_steps >= runs:
